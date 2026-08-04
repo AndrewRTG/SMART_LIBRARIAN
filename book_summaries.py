@@ -102,7 +102,7 @@ def get_summary_by_title(title: str) -> str:
     for book_title, summary in book_summaries_dict.items():
         if book_title.lower() == normalized_title:
             return (
-                f"Titlu cărții: '{book_title}'\n"
+                f"Titlul cărții: '{book_title}'\n"
                 f"Rezumatul complet: {summary}"
 
             )
