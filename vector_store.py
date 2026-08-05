@@ -3,26 +3,26 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
-from chromadb.api.models.Collection import Collection
-from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
+from chromadb.utils.embedding_functions import (
+    OpenAIEmbeddingFunction,
+)
 from dotenv import load_dotenv
 
-from book_summaries import book_summaries_dict
+from repositories.book_repository import get_all_books
 
 
-# Folderul în care ChromaDB va salva baza vectorială.
-CHROMA_DB_PATH = Path(__file__).parent / "chroma_db"
+CHROMA_DB_PATH = (
+    Path(__file__).resolve().parent
+    / "chroma_db"
+)
 
-# Numele colecției din ChromaDB.
 COLLECTION_NAME = "smart_librarian_books"
-
-# Modelul folosit pentru generarea embeddings.
 EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 def get_embedding_function() -> OpenAIEmbeddingFunction:
     """
-    Creează funcția de embeddings folosită de ChromaDB.
+    Creează funcția OpenAI folosită pentru embeddings.
     """
 
     load_dotenv()
@@ -31,7 +31,7 @@ def get_embedding_function() -> OpenAIEmbeddingFunction:
 
     if not api_key:
         raise ValueError(
-            "ENDAVA_OPENAI_API_KEY nu a fost găsită în fișierul .env."
+            "ENDAVA_OPENAI_API_KEY nu a fost găsită."
         )
 
     return OpenAIEmbeddingFunction(
@@ -40,58 +40,59 @@ def get_embedding_function() -> OpenAIEmbeddingFunction:
     )
 
 
-def get_book_collection() -> Collection:
+def get_book_collection():
     """
-    Creează sau deschide colecția de cărți din ChromaDB.
+    Creează sau deschide colecția ChromaDB.
     """
 
-    chroma_client = chromadb.PersistentClient(
+    client = chromadb.PersistentClient(
         path=str(CHROMA_DB_PATH)
     )
 
-    collection = chroma_client.get_or_create_collection(
+    return client.get_or_create_collection(
         name=COLLECTION_NAME,
         embedding_function=get_embedding_function(),
     )
 
-    return collection
 
-
-def initialize_vector_store() -> Collection:
+def initialize_vector_store():
     """
-    Încarcă titlurile și rezumatele cărților în ChromaDB.
-
-    Metoda upsert permite rularea repetată a scriptului fără
-    să creeze duplicate.
+    Încarcă în ChromaDB titlurile, temele și rezumatele scurte.
     """
 
     collection = get_book_collection()
+    books = get_all_books()
 
-    titles = list(book_summaries_dict.keys())
+    ids: list[str] = []
+    documents: list[str] = []
+    metadatas: list[dict[str, str]] = []
 
-    documents = [
-        (
+    for book in books:
+        title = book["title"]
+        themes = ", ".join(book["themes"])
+
+        document = (
             f"Title: {title}\n"
-            f"Summary and themes: {book_summaries_dict[title]}"
+            f"Themes: {themes}\n"
+            f"Short summary: {book['short_summary']}"
         )
-        for title in titles
-    ]
 
-    metadatas = [
-        {
-            "title": title,
-        }
-        for title in titles
-    ]
+        ids.append(title)
+        documents.append(document)
+        metadatas.append(
+            {
+                "title": title,
+            }
+        )
 
     collection.upsert(
-        ids=titles,
+        ids=ids,
         documents=documents,
         metadatas=metadatas,
     )
 
     print(
-        f"Vector store inițializat cu succes. "
+        "Vector store inițializat cu succes. "
         f"Număr de cărți: {collection.count()}"
     )
 
@@ -103,32 +104,28 @@ def retrieve_books(
     number_of_results: int = 3,
 ) -> list[dict[str, Any]]:
     """
-    Caută semantic cărți după temă, interes sau context.
-
-    Args:
-        query: Interesul sau tema descrisă de utilizator.
-        number_of_results: Numărul maxim de cărți returnate.
-
-    Returns:
-        O listă de cărți găsite în ChromaDB.
+    Caută semantic cărți după temă sau context.
     """
 
     clean_query = query.strip()
 
     if not clean_query:
-        raise ValueError("Întrebarea pentru retriever nu poate fi goală.")
+        raise ValueError(
+            "Întrebarea pentru retriever nu poate fi goală."
+        )
 
     collection = get_book_collection()
 
-    collection_size = collection.count()
-
-    if collection_size == 0:
+    if collection.count() == 0:
         raise RuntimeError(
             "Colecția ChromaDB este goală. "
-            "Rulează mai întâi initialize_vector_store()."
+            "Rulează mai întâi vector_store.py."
         )
 
-    result_limit = min(number_of_results, collection_size)
+    result_limit = min(
+        number_of_results,
+        collection.count(),
+    )
 
     results = collection.query(
         query_texts=[clean_query],
@@ -142,13 +139,13 @@ def retrieve_books(
 
     retrieved_books: list[dict[str, Any]] = []
 
-    metadatas = results["metadatas"][0]
     documents = results["documents"][0]
+    metadatas = results["metadatas"][0]
     distances = results["distances"][0]
 
-    for metadata, document, distance in zip(
-        metadatas,
+    for document, metadata, distance in zip(
         documents,
+        metadatas,
         distances,
     ):
         retrieved_books.append(
@@ -162,26 +159,8 @@ def retrieve_books(
     return retrieved_books
 
 
-def print_retrieved_books(
-    query: str,
-    books: list[dict[str, Any]],
-) -> None:
-    """
-    Afișează rezultatele retrieverului într-un format ușor de citit.
-    """
-
-    print(f"\nCăutare semantică: {query}")
-    print("-" * 60)
-
-    for index, book in enumerate(books, start=1):
-        print(
-            f"{index}. {book['title']} "
-            f"| distanță: {book['distance']:.4f}"
-        )
-
-
 if __name__ == "__main__":
-    initialize_vector_store()
+    collection = initialize_vector_store()
 
     test_query = "Vreau o carte despre prietenie și magie."
 
@@ -190,7 +169,14 @@ if __name__ == "__main__":
         number_of_results=3,
     )
 
-    print_retrieved_books(
-        query=test_query,
-        books=test_results,
-    )
+    print(f"\nCăutare semantică: {test_query}")
+    print("-" * 60)
+
+    for index, book in enumerate(
+        test_results,
+        start=1,
+    ):
+        print(
+            f"{index}. {book['title']} "
+            f"| distanță: {book['distance']:.4f}"
+        )
