@@ -1,5 +1,6 @@
 from config import configure_openai
 from services.librarian_service import SmartLibrarianService
+from agents import InputGuardrailTripwireTriggered
 
 
 async def main() -> None:
@@ -49,6 +50,18 @@ async def main() -> None:
             )
 
             print(f"\nAgent: {response}")
+
+        except InputGuardrailTripwireTriggered:
+            print(
+                "\nAgent: Te rog să folosești un limbaj "
+                "respectuos. Mesajul nu a fost procesat."
+            )
+
+        except TimeoutError:
+            print(
+                "\nAgent: Cererea a durat prea mult. "
+                "Te rog să încerci din nou."
+            )
 
         except Exception as error:
             print("\nAgent: A apărut o eroare.")

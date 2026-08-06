@@ -1,6 +1,9 @@
 import os
 
-from agents import set_default_openai_key
+from agents import (
+    set_default_openai_key,
+    set_tracing_disabled,
+)
 from dotenv import load_dotenv
 
 
@@ -21,4 +24,10 @@ def configure_openai() -> None:
             "ENDAVA_OPENAI_API_KEY nu a fost găsită în fișierul .env."
         )
 
-    set_default_openai_key(api_key)
+    set_default_openai_key(
+        api_key,
+        use_for_tracing=False,
+    )
+
+    # Dezactivează tracing-ul global pentru aplicație.
+    set_tracing_disabled(True)

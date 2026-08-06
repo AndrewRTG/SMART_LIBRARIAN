@@ -3,6 +3,10 @@ from agents import Agent, ModelSettings
 from config import MODEL_NAME
 from models import IntentDecision
 
+from app_guardrails.bad_word_guardrail import (
+    bad_word_guardrail,
+)
+
 
 def create_intent_agent() -> Agent:
     """
@@ -61,4 +65,7 @@ def create_intent_agent() -> Agent:
             max_tokens=150,
         ),
         output_type=IntentDecision,
+        input_guardrails=[
+            bad_word_guardrail,
+        ],
     )
