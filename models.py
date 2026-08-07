@@ -21,7 +21,11 @@ class IntentDecision(BaseModel):
         "new_recommendation",
         "follow_up",
         "exact_title_summary",
+        "image_generation",
         "other",
     ]
 
     title: str
+
+
+

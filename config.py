@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 
 
 MODEL_NAME = "gpt-5.6-luna"
+IMAGE_AGENT_MODEL = MODEL_NAME
+IMAGE_MODEL_NAME = "gpt-image-1"
 
 
 def configure_openai() -> None:

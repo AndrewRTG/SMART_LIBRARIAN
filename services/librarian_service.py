@@ -13,6 +13,9 @@ from utils.rag_helpers import (
     build_rag_context,
     validate_recommended_title,
 )
+from services.image_generation_service import (
+    ImageGenerationService,
+)
 from vector_store import retrieve_books
 
 
@@ -28,6 +31,7 @@ class SmartLibrarianService:
         self.follow_up_agent = create_follow_up_agent()
         self.recommendation_agent = create_recommendation_agent()
         self.summary_agent = create_summary_agent()
+        self.image_generation_service = ImageGenerationService()
 
     def reset(self) -> None:
         """
@@ -35,6 +39,74 @@ class SmartLibrarianService:
         """
 
         self.state.reset()
+
+
+    async def _handle_image_generation(
+        self,
+        user_question: str,
+        requested_title: str,
+    ) -> str:
+        """
+        Generează o imagine pentru un titlu explicit
+        sau pentru cartea curentă.
+        """
+
+        clean_title = requested_title.strip()
+
+        if clean_title:
+            book = get_book_by_exact_title(
+                clean_title
+            )
+
+            if book is None:
+                return (
+                    f"Titlul exact „{clean_title}” "
+                    "nu există în baza locală."
+                )
+
+            exact_title = book["title"]
+            summary = book["full_summary"]
+
+            # Cartea menționată explicit devine cartea curentă.
+            self.state.set_direct_book(
+                title=exact_title,
+                summary=summary,
+            )
+
+        else:
+            if not self.state.has_current_book():
+                return (
+                    "Nu există încă o carte curentă. "
+                    "Numește titlul exact al unei cărți sau "
+                    "cere mai întâi o recomandare."
+                )
+
+            exact_title = self.state.current_book_title
+            summary = self.state.current_book_summary
+
+        if exact_title is None or summary is None:
+            raise RuntimeError(
+                "Nu am putut determina cartea pentru imagine."
+            )
+
+        print(
+            f"\n[IMAGE] Generez imaginea pentru "
+            f"„{exact_title}”...",
+            flush=True,
+        )
+
+        image_path = (
+            await self.image_generation_service.generate_book_image(
+                title=exact_title,
+                summary=summary,
+                user_request=user_question,
+            )
+        )
+
+        return (
+            f"Imaginea pentru „{exact_title}” a fost generată.\n"
+            f"Fișier salvat la:\n{image_path.resolve()}"
+        )
 
     async def process_message(self, user_question: str) -> str:
         """
@@ -55,12 +127,20 @@ class SmartLibrarianService:
                 intent_decision.title
             )
 
+        if intent_decision.intent == "image_generation":
+             return await self._handle_image_generation(
+                 user_question=user_question,
+                 requested_title=intent_decision.title,
+              )
+
         if intent_decision.intent == "other":
             return (
                 "Te pot ajuta cu recomandări de cărți în funcție "
                 "de teme și preferințe sau cu rezumatele "
                 "titlurilor disponibile."
             )
+
+        
 
         return await self._handle_new_recommendation(
             user_question
