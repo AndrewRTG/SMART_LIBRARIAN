@@ -124,6 +124,4 @@ async def generate_book_image_file(
 
     image_path.write_bytes(image_bytes)
 
-    open_image_file(image_path)
-
     return image_path.resolve()
