@@ -62,6 +62,146 @@ def run_async(coroutine):
     return asyncio.run(coroutine)
 
 
+def chat_avatar_for_role(
+    role: str,
+) -> str:
+    """
+    Returnează avatarul folosit în chat pentru fiecare rol.
+    """
+
+    if role == "assistant":
+        return "📚"
+
+    return "🧑"
+
+
+def infer_requested_image_title(
+    user_message: str,
+    librarian: SmartLibrarianService,
+) -> str:
+    """
+    Încearcă să extragă titlul pentru care se cere generare de imagine.
+    """
+
+    title_match = re.search(
+        r"(?:for|inspired by|pentru|despre)\s+[\"„”']?([^\"„”'\n]+)",
+        user_message,
+        flags=re.IGNORECASE,
+    )
+
+    if title_match:
+        extracted_title = title_match.group(1).strip(" .!?")
+
+        if extracted_title:
+            return extracted_title
+
+    if librarian.state.current_book_title:
+        return librarian.state.current_book_title
+
+    return "this story"
+
+
+def get_loader_copy(
+    user_message: str,
+    librarian: SmartLibrarianService,
+) -> tuple[str, str]:
+    """
+    Returnează textele pentru loader în funcție de tipul cererii.
+    """
+
+    lower_message = user_message.lower()
+    image_keywords = (
+        "image",
+        "imagine",
+        "visual",
+        "illustration",
+        "ilustra",
+    )
+
+    if any(
+        keyword in lower_message
+        for keyword in image_keywords
+    ):
+        image_title = infer_requested_image_title(
+            user_message,
+            librarian,
+        )
+        return (
+            f'Imagining “{image_title}”...',
+            "Creating your visual interpretation",
+        )
+
+    return (
+        "Searching the library...",
+        "Looking for books and recommendations",
+    )
+
+
+def build_error_card_payload(
+    response: str,
+) -> dict[str, str] | None:
+    """
+    Transformă mesajele de eroare cunoscute în carduri UI.
+    """
+
+    normalized = response.lower()
+
+    if (
+        "nu există în baza locală" in normalized
+        or "nu am putut identifica titlul" in normalized
+        or "couldn't find" in normalized
+        or "could not find" in normalized
+    ):
+        return {
+            "title": "We couldn't find that book.",
+            "hint": "Try another title or ask for a recommendation.",
+        }
+
+    if (
+        "nu a putut fi generată" in normalized
+        or "image could not" in normalized
+    ):
+        return {
+            "title": "We couldn't generate that image.",
+            "hint": "Try again in a few seconds or ask for a different style.",
+        }
+
+    if (
+        "a apărut o problemă" in normalized
+        or "cererea a durat prea mult" in normalized
+    ):
+        return {
+            "title": "Something went wrong.",
+            "hint": "Please try again in a moment.",
+        }
+
+    return None
+
+
+def render_error_card(
+    title: str,
+    hint: str,
+) -> None:
+    """
+    Afișează un card de eroare premium în chat.
+    """
+
+    safe_title = title
+    safe_hint = hint
+
+    st.html(
+        f"""
+<div class="chat-error-card">
+    <div class="chat-error-icon">⚠</div>
+    <div class="chat-error-content">
+        <div class="chat-error-title">{safe_title}</div>
+        <div class="chat-error-hint">{safe_hint}</div>
+    </div>
+</div>
+        """
+    )
+
+
 def remove_redundant_book_summary(
     response: str,
     title: str,
@@ -178,8 +318,19 @@ def render_chat_history() -> None:
         role = message["role"]
         content = message["content"]
 
-        with st.chat_message(role):
-            st.markdown(content)
+        with st.chat_message(
+            role,
+            avatar=chat_avatar_for_role(role),
+        ):
+            error_payload = message.get("error")
+
+            if error_payload and role == "assistant":
+                render_error_card(
+                    title=error_payload["title"],
+                    hint=error_payload["hint"],
+                )
+            else:
+                st.markdown(content)
 
             book = message.get("book")
 
@@ -355,20 +506,28 @@ def process_user_message(
 
     # Mesajul nou nu era în istoricul randat la începutul
     # acestui rerun, așa că îl afișăm imediat.
-    with st.chat_message("user"):
+    with st.chat_message(
+        "user",
+        avatar=chat_avatar_for_role("user"),
+    ):
         st.markdown(user_message)
+
+    librarian = st.session_state["librarian"]
+
+    loader_title, loader_subtitle = get_loader_copy(
+        user_message,
+        librarian,
+    )
 
     loader_placeholder = st.empty()
 
     render_ai_loader(
         loader_placeholder,
-        title="Smart Librarian is thinking",
-        subtitle="Exploring stories, knowledge and imagination",
+        title=loader_title,
+        subtitle=loader_subtitle,
     )
 
     try:
-        librarian = st.session_state["librarian"]
-
         previous_title = (
             librarian.state.current_book_title
         )
@@ -419,6 +578,10 @@ def process_user_message(
         "content": response,
     }
 
+    error_payload = build_error_card_payload(
+        response=response,
+    )
+
     image_payload = extract_generated_image_payload(
         response=response,
         librarian=librarian,
@@ -446,6 +609,16 @@ def process_user_message(
             "title": current_title,
             "summary": current_summary,
         }
+
+    if (
+        "book" not in assistant_message
+        and "image" not in assistant_message
+        and error_payload
+    ):
+        assistant_message["error"] = error_payload
+        assistant_message["content"] = error_payload[
+            "title"
+        ]
 
     st.session_state["messages"].append(
     assistant_message
@@ -477,13 +650,17 @@ def process_pending_visualization() -> None:
         ),
     )
 
-    loader_placeholder = st.empty()
+    with st.chat_message(
+        "assistant",
+        avatar=chat_avatar_for_role("assistant"),
+    ):
+        loader_placeholder = st.empty()
 
-    render_ai_loader(
-        loader_placeholder,
-        title=f'Imagining “{title}”',
-        subtitle="Creating your visual interpretation",
-    )
+        render_ai_loader(
+            loader_placeholder,
+            title=f'Imagining “{title}”...',
+            subtitle="Creating your visual interpretation",
+        )
 
     try:
         librarian = st.session_state["librarian"]
@@ -591,6 +768,68 @@ def render_hero() -> None:
     )
 
 
+def render_sidebar() -> None:
+    """
+    Afișează sidebar premium și controlele conversației.
+    """
+
+    with st.sidebar:
+        st.html(
+            """
+<section class="sidebar-brand">
+    <div class="sidebar-brand-logo">📚</div>
+    <div class="sidebar-brand-text">
+        <div class="sidebar-brand-title">Smart Librarian</div>
+        <div class="sidebar-brand-subtitle">Your AI reading companion</div>
+    </div>
+</section>
+            """
+        )
+
+        if st.button(
+            "New Conversation",
+            key="new_conversation",
+            use_container_width=True,
+        ):
+            st.session_state["messages"] = []
+            st.session_state["librarian"].reset()
+            st.session_state.pop(
+                "pending_visualization",
+                None,
+            )
+            st.rerun()
+
+        st.html(
+            """
+<section class="sidebar-panel">
+    <div class="sidebar-panel-label">Capabilities</div>
+
+    <div class="sidebar-capability-item">Book Search</div>
+    <div class="sidebar-capability-item">AI Image Generation</div>
+</section>
+
+<section class="sidebar-panel sidebar-status-panel">
+    <div class="sidebar-panel-label">Status</div>
+
+    <div class="sidebar-status-row">
+        <span class="sidebar-status-dot"></span>
+        AI Librarian Online
+    </div>
+</section>
+
+<section class="sidebar-panel sidebar-about-panel">
+    <div class="sidebar-panel-label">About</div>
+
+    <div class="sidebar-about-text">
+        Discover books, ask nuanced follow-ups,
+        and generate visual interpretations
+        from your favorite stories.
+    </div>
+</section>
+            """
+        )
+
+
 def render_empty_state() -> str | None:
     st.html(
         """
@@ -645,9 +884,9 @@ load_css()
 
 initialize_app_state()
 
-render_hero()
+render_sidebar()
 
-process_pending_visualization()
+render_hero()
 
 if not st.session_state["messages"]:
     quick_prompt = render_empty_state()
@@ -655,6 +894,8 @@ else:
     quick_prompt = None
 
 render_chat_history()
+
+process_pending_visualization()
 
 prompt = st.chat_input(
     "Ask your librarian about a book..."
